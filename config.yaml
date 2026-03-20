@@ -1,0 +1,20 @@
+pack:
+  metadata:
+    title: "pixel.ai"
+    description: "anything in → one pixel out"
+
+  css:
+    - ./web/style.css
+
+  html:
+    - ./web/body.html
+
+  scripts:
+    - ./web/app.js
+
+  wasm:
+    app:
+      binary: ./pkg_nomodules/pixel_ai_bg.wasm
+      glue: ./pkg_nomodules/pixel_ai.js
+      id: "bin-wasm-app"
+      compression: "brotli"

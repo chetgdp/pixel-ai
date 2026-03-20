@@ -1,0 +1,48 @@
+body {
+    background: #111;
+    color: #eee;
+    font-family: monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 20vh;
+}
+#input {
+    font-size: 1.5em;
+    padding: 0.5em;
+    width: 400px;
+    background: #222;
+    color: #eee;
+    border: 1px solid #444;
+}
+#pixel {
+    margin-top: 2em;
+    width: 200px;
+    height: 200px;
+    border: 2px solid #444;
+}
+#label {
+    margin-top: 1em;
+    font-size: 1.2em;
+}
+#file-label {
+    margin-top: 1em;
+    background: #222;
+    color: #eee;
+    border: 1px solid #444;
+    padding: 0.3em 1em;
+    font-family: monospace;
+    cursor: pointer;
+}
+#file-label:hover { border-color: #888; }
+#file { display: none; }
+#file-name { margin-top: 0.5em; color: #888; font-size: 0.9em; }
+#toggle {
+    margin-top: 1em;
+    background: #222;
+    color: #eee;
+    border: 1px solid #444;
+    padding: 0.3em 1em;
+    font-family: monospace;
+    cursor: pointer;
+}

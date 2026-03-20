@@ -1,4 +1,4 @@
-# pixel.ai
+# [pixel.ai](https://chetgdp.github.io/pixel.ai)
 Make a single pixel generator AI model, anything in -> one pixel out
 
 A pixel is made up of 3 or 4 u8 values: 
@@ -16,7 +16,38 @@ How big of an input should we accept? a few mb? No, larger, say 4gb? or essentia
 
 This can be a very simple neural network. You have 4 output nodes and many many more input nodes. 
 
+## 
 
+we have a nice base now simple random init of weights and a forward pass, no training, no backprop, etc
 
+we hardcode the seed, so each init should be the same. 
 
+now to be a crazy person, we build a wasm-bindgen project and try to make this a webiste. for now simple
 
+textbox -> output display under it
+
+next, we get to be a crazy person. using webgl2/glsl shaders to run forward pass
+
+## run
+
+```
+cargo build
+
+cargo run -- "text"
+
+cargo run -- inputfile.any
+
+feh --zoom max --force-aliasing pixel.ppm 
+```
+
+## histos
+
+TODO: update histos llms.txt to document script injection order. user `scripts` are inlined *before* `core.js` in the output HTML, so `window.wasmReady` and `wasm_bindgen` don't exist yet when user scripts execute. user scripts must defer to `DOMContentLoaded` then `await window.wasmReady`:
+
+```js
+window.addEventListener('DOMContentLoaded', async () => {
+    await window.wasmReady;
+    const { MyThing } = wasm_bindgen;
+    // ...
+});
+```

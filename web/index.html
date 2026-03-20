@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>pixel.ai</title>
+    <style>
+        body {
+            background: #111;
+            color: #eee;
+            font-family: monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 20vh;
+        }
+        #input {
+            font-size: 1.5em;
+            padding: 0.5em;
+            width: 400px;
+            background: #222;
+            color: #eee;
+            border: 1px solid #444;
+        }
+        #pixel {
+            margin-top: 2em;
+            width: 200px;
+            height: 200px;
+            border: 2px solid #444;
+        }
+        #label {
+            margin-top: 1em;
+            font-size: 1.2em;
+        }
+        #file-label {
+            margin-top: 1em;
+            background: #222;
+            color: #eee;
+            border: 1px solid #444;
+            padding: 0.3em 1em;
+            font-family: monospace;
+            cursor: pointer;
+        }
+        #file-label:hover { border-color: #888; }
+        #file { display: none; }
+        #file-name { margin-top: 0.5em; color: #888; font-size: 0.9em; }
+        #toggle {
+            margin-top: 1em;
+            background: #222;
+            color: #eee;
+            border: 1px solid #444;
+            padding: 0.3em 1em;
+            font-family: monospace;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>pixel.ai</h1>
+    <p>anything in &rarr; one pixel out</p>
+    <input id="input" type="text" placeholder="type anything..." autofocus />
+    <label id="file-label" for="file">or open a file</label>
+    <input id="file" type="file" />
+    <div id="file-name"></div>
+    <div id="pixel"></div>
+    <div id="label"></div>
+    <button id="toggle">GPU</button>
+    <div id="time"></div>
+    <canvas id="gl" style="display:none"></canvas>
+    <script type="module">
+        import init, { GpuPipeline, CpuPipeline } from '../pkg/pixel_ai.js';
+        await init();
+        const gpu = new GpuPipeline('gl');
+        const cpu = new CpuPipeline();
+        let useGpu = true;
+        const btn = document.getElementById('toggle');
+        btn.addEventListener('click', () => {
+            useGpu = !useGpu;
+            btn.textContent = useGpu ? 'GPU' : 'CPU';
+            if (fileBytes) {
+                computeBytes(fileBytes);
+            } else {
+                document.getElementById('input').dispatchEvent(new Event('input'));
+            }
+        });
+        function showResult(hex, ms) {
+            document.getElementById('pixel').style.background = hex;
+            document.getElementById('label').textContent = hex;
+            document.getElementById('time').textContent = `${ms}ms`;
+        }
+        function clearResult() {
+            document.getElementById('pixel').style.background = 'transparent';
+            document.getElementById('label').textContent = '';
+            document.getElementById('time').textContent = '';
+        }
+        function computeBytes(bytes) {
+            const t0 = performance.now();
+            const hex = useGpu ? gpu.compute_bytes(bytes) : cpu.compute_bytes(bytes);
+            showResult(hex, (performance.now() - t0).toFixed(3));
+        }
+
+        let fileBytes = null;
+
+        document.getElementById('input').addEventListener('input', e => {
+            const text = e.target.value;
+            if (!text) { clearResult(); return; }
+            fileBytes = null;
+            document.getElementById('file').value = '';
+            document.getElementById('file-name').textContent = '';
+            const t0 = performance.now();
+            const hex = useGpu ? gpu.compute(text) : cpu.compute(text);
+            showResult(hex, (performance.now() - t0).toFixed(3));
+        });
+
+        document.getElementById('file').addEventListener('change', async e => {
+            const file = e.target.files[0];
+            if (!file) { clearResult(); return; }
+            document.getElementById('input').value = '';
+            document.getElementById('file-name').textContent = file.name;
+            fileBytes = new Uint8Array(await file.arrayBuffer());
+            computeBytes(fileBytes);
+        });
+    </script>
+</body>
+</html>
