@@ -8,20 +8,37 @@ const cpu = new CpuPipeline();
 let useGpu = true;
 let fileBytes = null;
 
+// init three.js viz
+window.initViz();
+
 function showResult(hex, ms) {
-    document.getElementById('pixel').style.background = hex;
-    document.getElementById('label').textContent = hex;
+    // hex is #rrggbbaa
+    const rgb = hex.slice(0, 7);
+    document.getElementById('pixel-rgb').style.background = rgb;
+    document.getElementById('pixel-rgba').style.background = hex;
+    document.getElementById('label-rgb').textContent = rgb;
+    document.getElementById('label-rgba').textContent = hex;
     document.getElementById('time').textContent = ms + 'ms';
 }
 function clearResult() {
-    document.getElementById('pixel').style.background = 'transparent';
-    document.getElementById('label').textContent = '';
+    document.getElementById('pixel-rgb').style.background = 'transparent';
+    document.getElementById('pixel-rgba').style.background = 'transparent';
+    document.getElementById('label-rgb').textContent = '';
+    document.getElementById('label-rgba').textContent = '';
     document.getElementById('time').textContent = '';
+}
+function computeText(text) {
+    const t0 = performance.now();
+    const hex = useGpu ? gpu.compute(text) : cpu.compute(text);
+    showResult(hex, (performance.now() - t0).toFixed(3));
+    // viz uses CPU activations (GPU path doesn't expose them)
+    window.updateViz(cpu.activations(text));
 }
 function computeBytes(bytes) {
     const t0 = performance.now();
     const hex = useGpu ? gpu.compute_bytes(bytes) : cpu.compute_bytes(bytes);
     showResult(hex, (performance.now() - t0).toFixed(3));
+    window.updateViz(cpu.activations_bytes(bytes));
 }
 
 const btn = document.getElementById('toggle');
@@ -31,7 +48,8 @@ btn.addEventListener('click', () => {
     if (fileBytes) {
         computeBytes(fileBytes);
     } else {
-        document.getElementById('input').dispatchEvent(new Event('input'));
+        const text = document.getElementById('input').value;
+        if (text) computeText(text);
     }
 });
 
@@ -41,9 +59,7 @@ document.getElementById('input').addEventListener('input', e => {
     fileBytes = null;
     document.getElementById('file').value = '';
     document.getElementById('file-name').textContent = '';
-    const t0 = performance.now();
-    const hex = useGpu ? gpu.compute(text) : cpu.compute(text);
-    showResult(hex, (performance.now() - t0).toFixed(3));
+    computeText(text);
 });
 
 document.getElementById('file').addEventListener('change', async e => {
@@ -51,7 +67,18 @@ document.getElementById('file').addEventListener('change', async e => {
     if (!file) { clearResult(); return; }
     document.getElementById('input').value = '';
     document.getElementById('file-name').textContent = file.name;
-    fileBytes = new Uint8Array(await file.arrayBuffer());
-    computeBytes(fileBytes);
+    document.getElementById('file-error').style.display = 'none';
+    document.getElementById('spinner').style.display = 'block';
+    clearResult();
+    try {
+        fileBytes = new Uint8Array(await file.arrayBuffer());
+        computeBytes(fileBytes);
+    } catch (err) {
+        fileBytes = null;
+        document.getElementById('file-error').textContent = 'file too large to load (' + (file.size / 1e9).toFixed(1) + ' GB)';
+        document.getElementById('file-error').style.display = 'block';
+    } finally {
+        document.getElementById('spinner').style.display = 'none';
+    }
 });
 }); // DOMContentLoaded

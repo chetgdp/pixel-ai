@@ -2,31 +2,46 @@ body {
     background: #111;
     color: #eee;
     font-family: monospace;
+    margin: 0;
+    overflow: hidden;
+}
+#ui {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 10;
+    padding: 2em;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    padding-top: 20vh;
+    align-items: flex-start;
 }
+#ui h1 { margin: 0 0 0.2em 0; }
+#ui p { margin: 0 0 1em 0; }
 #input {
-    font-size: 1.5em;
-    padding: 0.5em;
-    width: 400px;
+    font-size: 1.2em;
+    padding: 0.4em;
+    width: 300px;
     background: #222;
     color: #eee;
     border: 1px solid #444;
 }
-#pixel {
-    margin-top: 2em;
-    width: 200px;
-    height: 200px;
+#pixels {
+    margin-top: 1em;
+    display: flex;
+    gap: 1em;
+}
+#pixel-rgb, #pixel-rgba {
+    width: 50px;
+    height: 50px;
     border: 2px solid #444;
 }
-#label {
-    margin-top: 1em;
-    font-size: 1.2em;
+#label-rgb, #label-rgba {
+    margin-top: 0.3em;
+    font-size: 0.85em;
 }
+#label-rgba { color: #888; }
 #file-label {
-    margin-top: 1em;
+    margin-top: 0.5em;
     background: #222;
     color: #eee;
     border: 1px solid #444;
@@ -36,13 +51,48 @@ body {
 }
 #file-label:hover { border-color: #888; }
 #file { display: none; }
-#file-name { margin-top: 0.5em; color: #888; font-size: 0.9em; }
+#file-name { margin-top: 0.3em; color: #888; font-size: 0.9em; }
+#spinner { margin-top: 0.5em; color: #aaa; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#spinner::before {
+    content: '';
+    display: inline-block;
+    width: 0.8em;
+    height: 0.8em;
+    border: 2px solid #555;
+    border-top-color: #eee;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 0.5em;
+    vertical-align: middle;
+}
+#file-error { margin-top: 0.5em; color: #e55; font-size: 0.9em; }
 #toggle {
-    margin-top: 1em;
+    margin-top: 0.5em;
     background: #222;
     color: #eee;
     border: 1px solid #444;
     padding: 0.3em 1em;
     font-family: monospace;
     cursor: pointer;
+}
+#node-tooltip {
+    display: none;
+    position: absolute;
+    z-index: 20;
+    background: #222;
+    color: #eee;
+    border: 1px solid #444;
+    padding: 0.3em 0.6em;
+    font-family: monospace;
+    font-size: 0.85em;
+    pointer-events: none;
+    white-space: nowrap;
+}
+#viz {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
 }

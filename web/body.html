@@ -1,11 +1,24 @@
-<h1>pixel.ai</h1>
-<p>anything in &rarr; one pixel out</p>
-<input id="input" type="text" placeholder="type anything..." autofocus />
-<label id="file-label" for="file">or open a file</label>
-<input id="file" type="file" />
-<div id="file-name"></div>
-<div id="pixel"></div>
-<div id="label"></div>
-<button id="toggle">GPU</button>
-<div id="time"></div>
+<div id="ui">
+    <h1>pixel.ai</h1>
+    <p>anything in &rarr; one pixel out</p>
+    <input id="input" type="text" placeholder="type anything..." autofocus />
+    <label id="file-label" for="file">or open a file</label>
+    <input id="file" type="file" />
+    <div id="file-name"></div>
+    <div id="spinner" style="display:none">folding...</div>
+    <div id="file-error" style="display:none"></div>
+    <div id="pixels">
+        <div>
+            <div id="pixel-rgb"></div>
+            <div id="label-rgb"></div>
+        </div>
+        <div>
+            <div id="pixel-rgba"></div>
+            <div id="label-rgba"></div>
+        </div>
+    </div>
+    <button id="toggle">GPU</button>
+    <div id="time"></div>
+</div>
+<div id="viz"></div>
 <canvas id="gl" style="display:none"></canvas>

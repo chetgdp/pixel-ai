@@ -28,6 +28,24 @@ textbox -> output display under it
 
 next, we get to be a crazy person. using webgl2/glsl shaders to run forward pass
 
+### three.js
+
+camera:
+- need panning
+- fix wasd affecting camera
+- smoother zoom
+
+viz:
+- not sure i like the three circles per layer
+
+add spinner for loading
+how to make viz update in real time as it goes
+
+final 4 pixels are RGBA, should show the components
+
+add generic framerate info thing
+
+
 ## run
 
 ```
