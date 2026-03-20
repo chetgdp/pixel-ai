@@ -18,9 +18,9 @@ void main() {
             float a = texelFetch(u_input, ivec2(j, 0), 0).r * 255.0 - 128.0;
             sum += w * a;
         }
-        // isigmoid + shift to [0,255]
-        float act = trunc((sum * 127.0) / (abs(sum) + 16.0));
-        result[i] = (act + 128.0) / 255.0;
+        // isigmoid with scale³ (16³=4096), remap [-127,127] -> [0,255]
+        float act = trunc((sum * 127.0) / (abs(sum) + 4096.0));
+        result[i] = (act + 127.0) * 255.0 / 254.0 / 255.0;
     }
     fragColor = result;
 }

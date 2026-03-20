@@ -200,14 +200,15 @@ function buildPixel() {
 function valToColor(v, r, g, b) {
     const t = (v - 128) / 127;
     const abs = Math.abs(t);
+    // diverging: orange (#C96B30) ← white (#F5EDE5) → blue (#2978B5)
     if (t < 0) {
-        r[0] = 0.05 * abs;
-        g[0] = 0.1 * abs;
-        b[0] = 0.4 + 0.6 * abs;
+        r[0] = 0.96 - 0.17 * abs;
+        g[0] = 0.93 - 0.51 * abs;
+        b[0] = 0.90 - 0.71 * abs;
     } else {
-        r[0] = 0.5 + 0.5 * abs;
-        g[0] = 0.3 + 0.3 * abs;
-        b[0] = 0.05 * abs;
+        r[0] = 0.96 - 0.80 * abs;
+        g[0] = 0.93 - 0.46 * abs;
+        b[0] = 0.90 - 0.19 * abs;
     }
 }
 

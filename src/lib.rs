@@ -30,7 +30,7 @@ pub struct Network {
 
 // simple neural network
 fn isigmoid(x: i32, scale: i32) -> i8 {
-    (x as i64 * 256 / (x.abs() as i64 + scale as i64)).clamp(-128, 127) as i8
+    ((x * 127) / (x.abs() + scale)) as i8
 }
 
 impl Network {
@@ -142,8 +142,9 @@ impl Network {
             for j in 0..HIDDEN5_SIZE {
                 sum += self.w6[i][j] as i32 * h5[j] as i32;
             }
-            // shift from [-127,127] to [0,255]
-            output[i] = (isigmoid(sum, HIDDEN5_SIZE as i32) as i32 + 128) as u8;
+            let out_scale = (HIDDEN5_SIZE * HIDDEN5_SIZE * HIDDEN5_SIZE) as i32;
+            let s = isigmoid(sum, out_scale) as i32;
+            output[i] = ((s + 127) * 255 / 254) as u8;
         }
 
         output
@@ -217,7 +218,9 @@ impl Network {
             for j in 0..HIDDEN5_SIZE {
                 sum += self.w6[i][j] as i32 * h5[j] as i32;
             }
-            result.push((isigmoid(sum, HIDDEN5_SIZE as i32) as i32 + 128) as u8);
+            let out_scale = (HIDDEN5_SIZE * HIDDEN5_SIZE * HIDDEN5_SIZE) as i32;
+            let s = isigmoid(sum, out_scale) as i32;
+            result.push(((s + 127) * 255 / 254) as u8);
         }
 
         result
