@@ -79,13 +79,13 @@ function buildNodes() {
         const positions = new Float32Array(count * 3);
         const colors = new Float32Array(count * 3);
 
-        // stagger nodes in z and radius so dense layers spread into a 3D band
-        const zSpread = Math.min(count / 500, 1.5);  // larger layers get more z spread
-        const rSpread = radius * 0.06;                // slight radial jitter
+        const zSpread = Math.min(count / 500, 1.5);
+        const rSpread = radius * 0.08;
+        const hash = (i, k) => { let h = Math.sin(i * 127.1 + k * 311.7) * 43758.5; return h - Math.floor(h); };
 
         for (let i = 0; i < count; i++) {
             const angle = (i / count) * Math.PI * 2;
-            const rOff = ((i % 3) - 1) * rSpread;    // cycle -1, 0, +1
+            const rOff = (hash(i, l) - 0.5) * 2 * rSpread;
             const zOff = Math.sin(angle * 7) * zSpread;
             positions[i * 3]     = Math.cos(angle) * (radius + rOff);
             positions[i * 3 + 1] = Math.sin(angle) * (radius + rOff);

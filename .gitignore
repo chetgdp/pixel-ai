@@ -1,0 +1,7 @@
+target/
+.DS_Store
+pkg/
+pkg_nomodules/
+pixel.ai.html
+pixelai.html
+index.html

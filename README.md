@@ -28,23 +28,33 @@ textbox -> output display under it
 
 next, we get to be a crazy person. using webgl2/glsl shaders to run forward pass
 
+### ML
+
+The sigmoid function we were using was giving us either 0 or 255 values. So we had claude come up with an activation function derivative of the sigmoid for 8 bit integers. It's basically an s-curve.
+
+```
+plot ((x * 127 / (abs(x) + 4096)) + 127) * 255 / 254 for x from -20000 to 20000
+```
+
+how to do backprop in wasm live? live signal like or dislike
+
+then we can do training
+
 ### three.js
 
 camera:
 - need panning
 - fix wasd affecting camera
 - smoother zoom
+- fix center to not be the final pixel for better rotating
+
+- add spinner for loading
+- final 4 pixels are RGBA, should show the components
+- add generic framerate info thing
 
 viz:
 - not sure i like the three circles per layer
-
-add spinner for loading
-how to make viz update in real time as it goes
-
-final 4 pixels are RGBA, should show the components
-
-add generic framerate info thing
-
+- how to make viz update in real time as it goes (can we? its too fast, you would have to slow it down)
 
 ## run
 
@@ -56,6 +66,10 @@ cargo run -- "text"
 cargo run -- inputfile.any
 
 feh --zoom max --force-aliasing pixel.ppm 
+
+wasm-pack build --target no-modules --out-dir pkg_nomodules
+
+histos config.yaml -o pixel.ai.html
 ```
 
 ## histos
