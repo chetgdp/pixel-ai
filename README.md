@@ -83,3 +83,44 @@ window.addEventListener('DOMContentLoaded', async () => {
     // ...
 });
 ```
+
+## WebGL2 Forward Pass Pipeline
+
+```mermaid
+graph TD
+    input["input string"] --> fold["fold_bytes (CPU)"]
+    fold --> encode["bias_encode"]
+    encode --> t_in["t_in<br/>RGBA8 1024x1<br/>4096 values"]
+
+    t_in --> H1
+    tw1["weights 1<br/>4096x512"] --> H1
+    tb1["biases 1<br/>512x1"] --> H1
+    H1["hidden.frag<br/>viewport 512x1<br/>2048 neurons"] --> th1["activations 1<br/>512x1"]
+
+    th1 --> H2
+    tw2["weights 2<br/>2048x256"] --> H2
+    tb2["biases 2<br/>256x1"] --> H2
+    H2["hidden.frag<br/>viewport 256x1<br/>1024 neurons"] --> th2["activations 2<br/>256x1"]
+
+    th2 --> H3
+    tw3["weights 3<br/>1024x64"] --> H3
+    tb3["biases 3<br/>64x1"] --> H3
+    H3["hidden.frag<br/>viewport 64x1<br/>256 neurons"] --> th3["activations 3<br/>64x1"]
+
+    th3 --> H4
+    tw4["weights 4<br/>256x16"] --> H4
+    tb4["biases 4<br/>16x1"] --> H4
+    H4["hidden.frag<br/>viewport 16x1<br/>64 neurons"] --> th4["activations 4<br/>16x1"]
+
+    th4 --> H5
+    tw5["weights 5<br/>64x4"] --> H5
+    tb5["biases 5<br/>4x1"] --> H5
+    H5["hidden.frag<br/>viewport 4x1<br/>16 neurons"] --> th5["activations 5<br/>4x1"]
+
+    th5 --> OUT
+    tw6["weights 6<br/>16x1"] --> OUT
+    tb6["biases 6<br/>1x1"] --> OUT
+    OUT["output.frag<br/>viewport 1x1<br/>4 outputs RGBA"] --> t_out["output pixel<br/>1x1"]
+
+    t_out --> read["readPixels → #rrggbbaa"]
+```

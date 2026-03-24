@@ -1,31 +1,75 @@
+/* gpu_webgl2.rs 
+a neural network compute pipeline via WebGL2
+rather than using compute shaders such as is possible with WebGPU
+you make use of webgl texturess and fragment shaders as a hack
+this file is mostly boilerplate binding together the shader inputs and outputs
+
+each pixel of a texture holds 4 neurons (RGBA-packed)
+the textures are our intermediate layer data
+
+t_in (input texture)
+  → hidden shader → th1 (texture, 4 neurons per pixel via RGBA)
+    → hidden shader → th2
+      → hidden shader → th3
+        → hidden shader → th4
+          → hidden shader → th5
+            → output shader → t_out (1x1 pixel, RGBA = 4 outputs)
+
+where the first input texture is what has been folded. its a 1 by SIZE/4 texture.
+same goes for the intermediate data layers
+weight textures are width/input by height/(output/4), RGBA-packed by output group
+biases are SIZE/4 by 1, RGBA-packed
+*/
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
+//use wasm_bindgen::JsCast;
+// almost everything we do here goes through this rendering context
 use web_sys::WebGl2RenderingContext as GL;
 use web_sys::{
     WebGlFramebuffer, WebGlProgram, WebGlShader, WebGlTexture,
     WebGlUniformLocation, WebGlVertexArrayObject,
 };
 
+// import shader files
 const VS: &str = include_str!("shaders/fullscreen.vert");
 const FS_HIDDEN: &str = include_str!("shaders/hidden.frag");
 const FS_OUTPUT: &str = include_str!("shaders/output.frag");
 
+// turn an array of i8s from the base network into a vector of unsigned bytes
 fn bias_encode(data: &[i8]) -> Vec<u8> {
     data.iter().map(|&v| (v as i16 + 128) as u8).collect()
 }
 
-fn compile(gl: &GL, kind: u32, src: &str) -> Result<WebGlShader, JsValue> {
-    let s = gl.create_shader(kind).ok_or("create_shader")?;
-    gl.shader_source(&s, src);
-    gl.compile_shader(&s);
-    if !gl.get_shader_parameter(&s, GL::COMPILE_STATUS).as_bool().unwrap_or(false) {
-        return Err(gl.get_shader_info_log(&s).unwrap_or_default().into());
+// interleave weights by groups of 4 output neurons for RGBA packing
+// pixel (x, y) RGBA = w[y*4+0][x], w[y*4+1][x], w[y*4+2][x], w[y*4+3][x]
+fn flat_rgba(arr: &[&[i8]]) -> Vec<i8> {
+    let out_size = arr.len();
+    let in_size = arr[0].len();
+    let mut result = Vec::with_capacity(out_size * in_size);
+    for group in (0..out_size).step_by(4) {
+        for j in 0..in_size {
+            result.push(arr[group][j]);
+            result.push(arr[group + 1][j]);
+            result.push(arr[group + 2][j]);
+            result.push(arr[group + 3][j]);
+        }
     }
-    Ok(s)
+    result
 }
 
+// take a kind of shader and a source string and compile it
+fn compile(gl: &GL, kind: u32, src: &str) -> Result<WebGlShader, JsValue> {
+    let shader = gl.create_shader(kind).ok_or("could not create shader")?;
+    gl.shader_source(&shader, src);
+    gl.compile_shader(&shader);
+    if !gl.get_shader_parameter(&shader, GL::COMPILE_STATUS).as_bool().unwrap_or(false) {
+        return Err(gl.get_shader_info_log(&shader).unwrap_or_default().into());
+    }
+    Ok(shader)
+}
+
+// vertex shader + fragment shader
 fn link(gl: &GL, vs: &WebGlShader, fs: &WebGlShader) -> Result<WebGlProgram, JsValue> {
-    let p = gl.create_program().ok_or("create_program")?;
+    let p = gl.create_program().ok_or("could not create program")?;
     gl.attach_shader(&p, vs);
     gl.attach_shader(&p, fs);
     gl.link_program(&p);
@@ -35,21 +79,27 @@ fn link(gl: &GL, vs: &WebGlShader, fs: &WebGlShader) -> Result<WebGlProgram, JsV
     Ok(p)
 }
 
-fn r8_tex(gl: &GL, w: i32, h: i32, data: &[u8]) -> Result<WebGlTexture, JsValue> {
-    let t = gl.create_texture().ok_or("create_texture")?;
+// take bias encoded data (i8->u8) and turn it into an RGBA8 texture
+// 4 values packed per pixel, so width should be original_size/4
+fn rgba8_data_tex(gl: &GL, w: i32, h: i32, data: &[u8]) -> Result<WebGlTexture, JsValue> {
+    let t = gl.create_texture().ok_or("failed to create texture")?;
     gl.bind_texture(GL::TEXTURE_2D, Some(&t));
+    // what in the magic fuckery is this function name?
     gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
-        GL::TEXTURE_2D, 0, GL::R8 as i32, w, h, 0, GL::RED, GL::UNSIGNED_BYTE, Some(data),
+        GL::TEXTURE_2D, 0, GL::RGBA8 as i32, w, h, 0, GL::RGBA, GL::UNSIGNED_BYTE, Some(data),
     )?;
+    // important to use nearest filtering to get exact values
     gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MIN_FILTER, GL::NEAREST as i32);
     gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MAG_FILTER, GL::NEAREST as i32);
+    // we clamp so texture does not repeat
     gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, GL::CLAMP_TO_EDGE as i32);
     gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, GL::CLAMP_TO_EDGE as i32);
     Ok(t)
 }
 
+// empty RGBA8 texture for activation render targets
 fn rgba8_tex(gl: &GL, w: i32, h: i32) -> Result<WebGlTexture, JsValue> {
-    let t = gl.create_texture().ok_or("create_texture")?;
+    let t = gl.create_texture().ok_or("failed to create texture")?;
     gl.bind_texture(GL::TEXTURE_2D, Some(&t));
     gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
         GL::TEXTURE_2D, 0, GL::RGBA8 as i32, w, h, 0, GL::RGBA, GL::UNSIGNED_BYTE, None,
@@ -61,6 +111,7 @@ fn rgba8_tex(gl: &GL, w: i32, h: i32) -> Result<WebGlTexture, JsValue> {
     Ok(t)
 }
 
+// make a framebuffer so we can write to an activation texture
 fn make_fbo(gl: &GL, tex: &WebGlTexture) -> Result<WebGlFramebuffer, JsValue> {
     let f = gl.create_framebuffer().ok_or("create_framebuffer")?;
     gl.bind_framebuffer(GL::FRAMEBUFFER, Some(&f));
@@ -102,6 +153,8 @@ pub struct GpuPipeline {
 impl GpuPipeline {
     #[wasm_bindgen(constructor)]
     pub fn new(canvas_id: &str) -> Result<GpuPipeline, JsValue> {
+        // could error this part better back to the user
+        // we need a display:none canvas?
         let doc = web_sys::window().unwrap().document().unwrap();
         let canvas = doc
             .get_element_by_id(canvas_id)
@@ -112,9 +165,13 @@ impl GpuPipeline {
             .ok_or("webgl2 not supported")?
             .dyn_into::<GL>()?;
 
+        // byte aligned, not padded
         gl.pixel_storei(GL::UNPACK_ALIGNMENT, 1);
 
         // compile shaders
+        // we have two shader programs
+        // one that compute the hidden layers 1-5 and one for the output layer
+        // they both reuse the simple vertex shader: vs
         let vs = compile(&gl, GL::VERTEX_SHADER, VS)?;
         let hidden_prog = link(&gl, &vs, &compile(&gl, GL::FRAGMENT_SHADER, FS_HIDDEN)?)?;
         let output_prog = link(&gl, &vs, &compile(&gl, GL::FRAGMENT_SHADER, FS_OUTPUT)?)?;
@@ -122,9 +179,6 @@ impl GpuPipeline {
         // init network, flatten weights for texture upload
         let net = crate::Network::new(0xCEEDEE); // Z NUTZ HA, gottem ;)
 
-        let flat = |arr: &[&[i8]]| -> Vec<i8> {
-            arr.iter().flat_map(|row| row.iter().copied()).collect()
-        };
         let w1_refs: Vec<&[i8]> = net.w1.iter().map(|r| r.as_slice()).collect();
         let w2_refs: Vec<&[i8]> = net.w2.iter().map(|r| r.as_slice()).collect();
         let w3_refs: Vec<&[i8]> = net.w3.iter().map(|r| r.as_slice()).collect();
@@ -134,27 +188,31 @@ impl GpuPipeline {
 
         use crate::*;
 
-        // weight & bias textures (R8, bias-encoded: value + 128)
-        let tw1 = r8_tex(&gl, STATE_SIZE as i32, HIDDEN1_SIZE as i32, &bias_encode(&flat(&w1_refs)))?;
-        let tb1 = r8_tex(&gl, HIDDEN1_SIZE as i32, 1, &bias_encode(&net.b1))?;
-        let tw2 = r8_tex(&gl, HIDDEN1_SIZE as i32, HIDDEN2_SIZE as i32, &bias_encode(&flat(&w2_refs)))?;
-        let tb2 = r8_tex(&gl, HIDDEN2_SIZE as i32, 1, &bias_encode(&net.b2))?;
-        let tw3 = r8_tex(&gl, HIDDEN2_SIZE as i32, HIDDEN3_SIZE as i32, &bias_encode(&flat(&w3_refs)))?;
-        let tb3 = r8_tex(&gl, HIDDEN3_SIZE as i32, 1, &bias_encode(&net.b3))?;
-        let tw4 = r8_tex(&gl, HIDDEN3_SIZE as i32, HIDDEN4_SIZE as i32, &bias_encode(&flat(&w4_refs)))?;
-        let tb4 = r8_tex(&gl, HIDDEN4_SIZE as i32, 1, &bias_encode(&net.b4))?;
-        let tw5 = r8_tex(&gl, HIDDEN4_SIZE as i32, HIDDEN5_SIZE as i32, &bias_encode(&flat(&w5_refs)))?;
-        let tb5 = r8_tex(&gl, HIDDEN5_SIZE as i32, 1, &bias_encode(&net.b5))?;
-        let tw6 = r8_tex(&gl, HIDDEN5_SIZE as i32, OUTPUT_SIZE as i32, &bias_encode(&flat(&w6_refs)))?;
-        let tb6 = r8_tex(&gl, OUTPUT_SIZE as i32, 1, &bias_encode(&net.b6))?;
-        let t_in = r8_tex(&gl, STATE_SIZE as i32, 1, &vec![128u8; STATE_SIZE])?;
+        // weight & bias textures (RGBA8, bias-encoded: value + 128)
+        // weights: input_size wide, output_size/4 tall (4 outputs per pixel via RGBA)
+        // biases: size/4 wide (4 biases per pixel via RGBA)
+        let tw1 = rgba8_data_tex(&gl, STATE_SIZE as i32, (HIDDEN1_SIZE / 4) as i32, &bias_encode(&flat_rgba(&w1_refs)))?;
+        let tb1 = rgba8_data_tex(&gl, (HIDDEN1_SIZE / 4) as i32, 1, &bias_encode(&net.b1))?;
+        let tw2 = rgba8_data_tex(&gl, HIDDEN1_SIZE as i32, (HIDDEN2_SIZE / 4) as i32, &bias_encode(&flat_rgba(&w2_refs)))?;
+        let tb2 = rgba8_data_tex(&gl, (HIDDEN2_SIZE / 4) as i32, 1, &bias_encode(&net.b2))?;
+        let tw3 = rgba8_data_tex(&gl, HIDDEN2_SIZE as i32, (HIDDEN3_SIZE / 4) as i32, &bias_encode(&flat_rgba(&w3_refs)))?;
+        let tb3 = rgba8_data_tex(&gl, (HIDDEN3_SIZE / 4) as i32, 1, &bias_encode(&net.b3))?;
+        let tw4 = rgba8_data_tex(&gl, HIDDEN3_SIZE as i32, (HIDDEN4_SIZE / 4) as i32, &bias_encode(&flat_rgba(&w4_refs)))?;
+        let tb4 = rgba8_data_tex(&gl, (HIDDEN4_SIZE / 4) as i32, 1, &bias_encode(&net.b4))?;
+        let tw5 = rgba8_data_tex(&gl, HIDDEN4_SIZE as i32, (HIDDEN5_SIZE / 4) as i32, &bias_encode(&flat_rgba(&w5_refs)))?;
+        let tb5 = rgba8_data_tex(&gl, (HIDDEN5_SIZE / 4) as i32, 1, &bias_encode(&net.b5))?;
+        let tw6 = rgba8_data_tex(&gl, HIDDEN5_SIZE as i32, (OUTPUT_SIZE / 4) as i32, &bias_encode(&flat_rgba(&w6_refs)))?;
+        let tb6 = rgba8_data_tex(&gl, (OUTPUT_SIZE / 4) as i32, 1, &bias_encode(&net.b6))?;
+        let t_in = rgba8_data_tex(&gl, (STATE_SIZE / 4) as i32, 1, &vec![128u8; STATE_SIZE])?;
 
-        // activation render targets (RGBA8 — R8 isn't color-renderable)
-        let th1 = rgba8_tex(&gl, HIDDEN1_SIZE as i32, 1)?;
-        let th2 = rgba8_tex(&gl, HIDDEN2_SIZE as i32, 1)?;
-        let th3 = rgba8_tex(&gl, HIDDEN3_SIZE as i32, 1)?;
-        let th4 = rgba8_tex(&gl, HIDDEN4_SIZE as i32, 1)?;
-        let th5 = rgba8_tex(&gl, HIDDEN5_SIZE as i32, 1)?;
+        // activation render targets (RGBA8)
+        // empty textures for the pipeline to write all 4 channels into
+        // SIZE/4 by 1 (4 neurons per pixel)
+        let th1 = rgba8_tex(&gl, (HIDDEN1_SIZE / 4) as i32, 1)?;
+        let th2 = rgba8_tex(&gl, (HIDDEN2_SIZE / 4) as i32, 1)?;
+        let th3 = rgba8_tex(&gl, (HIDDEN3_SIZE / 4) as i32, 1)?;
+        let th4 = rgba8_tex(&gl, (HIDDEN4_SIZE / 4) as i32, 1)?;
+        let th5 = rgba8_tex(&gl, (HIDDEN5_SIZE / 4) as i32, 1)?;
         let t_out = rgba8_tex(&gl, 1, 1)?;
 
         // framebuffers
@@ -166,10 +224,13 @@ impl GpuPipeline {
         let f_out = make_fbo(&gl, &t_out)?;
         gl.bind_framebuffer(GL::FRAMEBUFFER, None);
 
-        // fullscreen triangle
-        let vao = gl.create_vertex_array().ok_or("create_vertex_array")?;
+        // fullscreen triangle that goes past viewport
+        // we operate on the -1 to 1 clip space while the tri goes to 3.0
+        // need this as a trigger for the pipeline to run
+        // we use one oversized tris vertices, no need for a quad (2 tris)
+        let vao = gl.create_vertex_array().ok_or("failed to create_vertex_array")?;
         gl.bind_vertex_array(Some(&vao));
-        let vbo = gl.create_buffer().ok_or("create_buffer")?;
+        let vbo = gl.create_buffer().ok_or("failed to create_buffer")?;
         gl.bind_buffer(GL::ARRAY_BUFFER, Some(&vbo));
         let vertices: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
         unsafe {
@@ -181,6 +242,8 @@ impl GpuPipeline {
         gl.bind_vertex_array(None);
 
         // uniform locations
+        // these are basically variables that the shaders have access to 
+        // give them a location so GPU can access its memory
         let loc = |p: &WebGlProgram, n: &str| gl.get_uniform_location(p, n).unwrap();
         let h_w = loc(&hidden_prog, "u_weights");
         let h_b = loc(&hidden_prog, "u_biases");
@@ -207,6 +270,7 @@ impl GpuPipeline {
 
     // run the forward pass on the GPU, returns hex color string
     pub fn compute(&self, input: &str) -> Result<String, JsValue> {
+        // fold still done on cpu, this is still the bottleneck
         let state = crate::fold_bytes(input.as_bytes());
         self.compute_state(&state)
     }
@@ -215,11 +279,11 @@ impl GpuPipeline {
         let gl = &self.gl;
         let encoded = bias_encode(state);
 
-        // upload folded input
+        // upload folded input (RGBA-packed, 4 values per pixel)
         gl.bind_texture(GL::TEXTURE_2D, Some(&self.t_in));
         gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
-            GL::TEXTURE_2D, 0, GL::R8 as i32, crate::STATE_SIZE as i32, 1, 0,
-            GL::RED, GL::UNSIGNED_BYTE, Some(&encoded),
+            GL::TEXTURE_2D, 0, GL::RGBA8 as i32, (crate::STATE_SIZE / 4) as i32, 1, 0,
+            GL::RGBA, GL::UNSIGNED_BYTE, Some(&encoded),
         )?;
 
         gl.bind_vertex_array(Some(&self.vao));
@@ -232,7 +296,7 @@ impl GpuPipeline {
 
         // layer 1: 4096 -> 2048
         gl.bind_framebuffer(GL::FRAMEBUFFER, Some(&self.fh1));
-        gl.viewport(0, 0, crate::HIDDEN1_SIZE as i32, 1);
+        gl.viewport(0, 0, (crate::HIDDEN1_SIZE / 4) as i32, 1);
         bind(0, &self.tw1); bind(1, &self.tb1); bind(2, &self.t_in);
         gl.uniform1i(Some(&self.h_w), 0);
         gl.uniform1i(Some(&self.h_b), 1);
@@ -242,28 +306,28 @@ impl GpuPipeline {
 
         // layer 2: 2048 -> 1024
         gl.bind_framebuffer(GL::FRAMEBUFFER, Some(&self.fh2));
-        gl.viewport(0, 0, crate::HIDDEN2_SIZE as i32, 1);
+        gl.viewport(0, 0, (crate::HIDDEN2_SIZE / 4) as i32, 1);
         bind(0, &self.tw2); bind(1, &self.tb2); bind(2, &self.th1);
         gl.uniform1i(Some(&self.h_s), crate::HIDDEN1_SIZE as i32);
         gl.draw_arrays(GL::TRIANGLES, 0, 3);
 
         // layer 3: 1024 -> 256
         gl.bind_framebuffer(GL::FRAMEBUFFER, Some(&self.fh3));
-        gl.viewport(0, 0, crate::HIDDEN3_SIZE as i32, 1);
+        gl.viewport(0, 0, (crate::HIDDEN3_SIZE / 4) as i32, 1);
         bind(0, &self.tw3); bind(1, &self.tb3); bind(2, &self.th2);
         gl.uniform1i(Some(&self.h_s), crate::HIDDEN2_SIZE as i32);
         gl.draw_arrays(GL::TRIANGLES, 0, 3);
 
         // layer 4: 256 -> 64
         gl.bind_framebuffer(GL::FRAMEBUFFER, Some(&self.fh4));
-        gl.viewport(0, 0, crate::HIDDEN4_SIZE as i32, 1);
+        gl.viewport(0, 0, (crate::HIDDEN4_SIZE / 4) as i32, 1);
         bind(0, &self.tw4); bind(1, &self.tb4); bind(2, &self.th3);
         gl.uniform1i(Some(&self.h_s), crate::HIDDEN3_SIZE as i32);
         gl.draw_arrays(GL::TRIANGLES, 0, 3);
 
         // layer 5: 64 -> 16
         gl.bind_framebuffer(GL::FRAMEBUFFER, Some(&self.fh5));
-        gl.viewport(0, 0, crate::HIDDEN5_SIZE as i32, 1);
+        gl.viewport(0, 0, (crate::HIDDEN5_SIZE / 4) as i32, 1);
         bind(0, &self.tw5); bind(1, &self.tb5); bind(2, &self.th4);
         gl.uniform1i(Some(&self.h_s), crate::HIDDEN4_SIZE as i32);
         gl.draw_arrays(GL::TRIANGLES, 0, 3);

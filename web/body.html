@@ -1,24 +1,46 @@
 <div id="ui">
+    <button id="sidebar-toggle">&lsaquo;</button>
     <h1>pixel.ai</h1>
     <p>anything in &rarr; one pixel out</p>
-    <input id="input" type="text" placeholder="type anything..." autofocus />
+    <textarea id="input" placeholder="type anything..." autofocus rows="3"></textarea>
     <label id="file-label" for="file">or open a file</label>
     <input id="file" type="file" />
     <div id="file-name"></div>
     <div id="spinner" style="display:none">folding...</div>
     <div id="file-error" style="display:none"></div>
-    <div id="pixels">
-        <div>
-            <div id="pixel-rgb"></div>
-            <div id="label-rgb"></div>
+    <div id="output-row">
+        <div id="pixels">
+            <div>
+                <div id="pixel-rgb"></div>
+                <div id="label-rgb"></div>
+            </div>
+            <div>
+                <div id="pixel-rgba"></div>
+                <div id="label-rgba"></div>
+            </div>
         </div>
-        <div>
-            <div id="pixel-rgba"></div>
-            <div id="label-rgba"></div>
+        <div id="training">
+            <button id="btn-like" title="reinforce this color">&#10003;</button>
+            <button id="btn-dislike" title="pick the correct color">&#10007;</button>
         </div>
     </div>
-    <button id="toggle">GPU</button>
-    <div id="time"></div>
+    <div id="picker-panel" style="display:none">
+        <canvas id="picker-sv" width="200" height="150"></canvas>
+        <canvas id="picker-hue" width="200" height="16"></canvas>
+        <div id="picker-footer">
+            <div id="picker-preview"></div>
+            <input id="picker-hex" type="text" maxlength="7" value="#ff0000" />
+            <button id="picker-train">train</button>
+        </div>
+    </div>
+    <div id="controls">
+        <div id="toggle">
+            <button id="toggle-cpu" class="toggle-opt">CPU</button>
+            <button id="toggle-webgl2" class="toggle-opt active">WebGL2</button>
+        </div>
+        <span id="time"></span>
+        <span id="train-steps"></span>
+    </div>
 </div>
 <div id="viz"></div>
 <canvas id="gl" style="display:none"></canvas>

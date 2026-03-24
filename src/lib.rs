@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
-mod gpu;
+mod gpu_webgl2;
 
 // fold to 4k then division by 2/4 all the way down
 pub const STATE_SIZE:   usize = 4096;
@@ -31,6 +31,66 @@ pub struct Network {
 // simple neural network
 fn isigmoid(x: i32, scale: i32) -> i8 {
     ((x * 127) / (x.abs() + scale)) as i8
+}
+
+// f32 versions for training
+fn isigmoid_f32(x: f32, scale: f32) -> f32 {
+    (x * 127.0) / (x.abs() + scale)
+}
+
+// derivative: d/dx isigmoid = 127 * scale / (|x| + scale)^2
+fn isigmoid_deriv(x: f32, scale: f32) -> f32 {
+    let d = x.abs() + scale;
+    127.0 * scale / (d * d)
+}
+
+// forward one layer in f32, returns (pre_activations, activations)
+fn forward_layer(
+    weights: &[f32], biases: &[f32], input: &[f32],
+    out_size: usize, in_size: usize, scale: f32,
+) -> (Vec<f32>, Vec<f32>) {
+    let mut pre = Vec::with_capacity(out_size);
+    let mut act = Vec::with_capacity(out_size);
+    for i in 0..out_size {
+        let mut sum = biases[i];
+        for j in 0..in_size {
+            sum += weights[i * in_size + j] * input[j];
+        }
+        pre.push(sum);
+        act.push(isigmoid_f32(sum, scale));
+    }
+    (pre, act)
+}
+
+// backward one layer: compute gradients, update weights in place, return d_input
+// updates weights immediately to avoid storing the full gradient matrix
+fn backward_and_update(
+    d_act: &[f32], pre: &[f32], input: &[f32],
+    weights: &mut [f32], biases: &mut [f32],
+    out_size: usize, in_size: usize, scale: f32, lr: f32,
+) -> Vec<f32> {
+    let mut d_input = vec![0.0f32; in_size];
+    for i in 0..out_size {
+        let d_pre = d_act[i] * isigmoid_deriv(pre[i], scale);
+        biases[i] -= lr * d_pre;
+        for j in 0..in_size {
+            // propagate gradient using original weight, then update
+            d_input[j] += d_pre * weights[i * in_size + j];
+            weights[i * in_size + j] -= lr * d_pre * input[j];
+        }
+    }
+    d_input
+}
+
+fn parse_hex_rgba(hex: &str) -> [u8; 4] {
+    let hex = hex.trim_start_matches('#');
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
+    let a = if hex.len() >= 8 {
+        u8::from_str_radix(&hex[6..8], 16).unwrap_or(255)
+    } else { 255 };
+    [r, g, b, a]
 }
 
 impl Network {
@@ -227,6 +287,89 @@ impl Network {
     }
 }
 
+// f32 shadow copies of i8 weights for gradient accumulation
+// stored as flat Vec<f32> (row-major: weights[i * in_size + j])
+struct ShadowWeights {
+    w1: Vec<f32>, b1: Vec<f32>,
+    w2: Vec<f32>, b2: Vec<f32>,
+    w3: Vec<f32>, b3: Vec<f32>,
+    w4: Vec<f32>, b4: Vec<f32>,
+    w5: Vec<f32>, b5: Vec<f32>,
+    w6: Vec<f32>, b6: Vec<f32>,
+}
+
+impl ShadowWeights {
+    fn from_network(net: &Network) -> Self {
+        let flatten = |w: &[&[i8]]| -> Vec<f32> {
+            w.iter().flat_map(|row| row.iter().map(|&v| v as f32)).collect()
+        };
+        let bias_f32 = |b: &[i8]| -> Vec<f32> {
+            b.iter().map(|&v| v as f32).collect()
+        };
+        let w1r: Vec<&[i8]> = net.w1.iter().map(|r| r.as_slice()).collect();
+        let w2r: Vec<&[i8]> = net.w2.iter().map(|r| r.as_slice()).collect();
+        let w3r: Vec<&[i8]> = net.w3.iter().map(|r| r.as_slice()).collect();
+        let w4r: Vec<&[i8]> = net.w4.iter().map(|r| r.as_slice()).collect();
+        let w5r: Vec<&[i8]> = net.w5.iter().map(|r| r.as_slice()).collect();
+        let w6r: Vec<&[i8]> = net.w6.iter().map(|r| r.as_slice()).collect();
+        ShadowWeights {
+            w1: flatten(&w1r), b1: bias_f32(&net.b1),
+            w2: flatten(&w2r), b2: bias_f32(&net.b2),
+            w3: flatten(&w3r), b3: bias_f32(&net.b3),
+            w4: flatten(&w4r), b4: bias_f32(&net.b4),
+            w5: flatten(&w5r), b5: bias_f32(&net.b5),
+            w6: flatten(&w6r), b6: bias_f32(&net.b6),
+        }
+    }
+
+    // quantize f32 shadow weights back into the i8 network
+    fn quantize_into(&self, net: &mut Network) {
+        let q_weights = |src: &[f32], dst: &mut [i8]| {
+            for (d, &s) in dst.iter_mut().zip(src.iter()) {
+                *d = s.round().clamp(-128.0, 127.0) as i8;
+            }
+        };
+        // weights
+        for (i, row) in net.w1.iter_mut().enumerate() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = self.w1[i * STATE_SIZE + j].round().clamp(-128.0, 127.0) as i8;
+            }
+        }
+        for (i, row) in net.w2.iter_mut().enumerate() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = self.w2[i * HIDDEN1_SIZE + j].round().clamp(-128.0, 127.0) as i8;
+            }
+        }
+        for (i, row) in net.w3.iter_mut().enumerate() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = self.w3[i * HIDDEN2_SIZE + j].round().clamp(-128.0, 127.0) as i8;
+            }
+        }
+        for (i, row) in net.w4.iter_mut().enumerate() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = self.w4[i * HIDDEN3_SIZE + j].round().clamp(-128.0, 127.0) as i8;
+            }
+        }
+        for (i, row) in net.w5.iter_mut().enumerate() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = self.w5[i * HIDDEN4_SIZE + j].round().clamp(-128.0, 127.0) as i8;
+            }
+        }
+        for (i, row) in net.w6.iter_mut().enumerate() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v = self.w6[i * HIDDEN5_SIZE + j].round().clamp(-128.0, 127.0) as i8;
+            }
+        }
+        // biases
+        q_weights(&self.b1, &mut net.b1);
+        q_weights(&self.b2, &mut net.b2);
+        q_weights(&self.b3, &mut net.b3);
+        q_weights(&self.b4, &mut net.b4);
+        q_weights(&self.b5, &mut net.b5);
+        q_weights(&self.b6, &mut net.b6);
+    }
+}
+
 // TODO: less lossy fold — multiple passes, better mixing
 pub fn fold_bytes(data: &[u8]) -> [i8; STATE_SIZE] {
     let mut state = [0i32; STATE_SIZE];
@@ -245,13 +388,79 @@ pub fn fold_bytes(data: &[u8]) -> [i8; STATE_SIZE] {
 }
 
 #[wasm_bindgen]
-pub struct CpuPipeline;
+pub struct CpuPipeline {
+    net: Network,
+    shadow: ShadowWeights,
+    lr: f32,
+    steps: u32,
+}
+
+impl CpuPipeline {
+    fn train_state(&mut self, state: &[i8; STATE_SIZE], target: [u8; 4]) {
+        let lr = self.lr;
+        let input0: Vec<f32> = state.iter().map(|&v| v as f32).collect();
+
+        // forward pass using f32 shadow weights, storing intermediates
+        let (pre1, act1) = forward_layer(&self.shadow.w1, &self.shadow.b1, &input0,
+            HIDDEN1_SIZE, STATE_SIZE, STATE_SIZE as f32);
+        let (pre2, act2) = forward_layer(&self.shadow.w2, &self.shadow.b2, &act1,
+            HIDDEN2_SIZE, HIDDEN1_SIZE, HIDDEN1_SIZE as f32);
+        let (pre3, act3) = forward_layer(&self.shadow.w3, &self.shadow.b3, &act2,
+            HIDDEN3_SIZE, HIDDEN2_SIZE, HIDDEN2_SIZE as f32);
+        let (pre4, act4) = forward_layer(&self.shadow.w4, &self.shadow.b4, &act3,
+            HIDDEN4_SIZE, HIDDEN3_SIZE, HIDDEN3_SIZE as f32);
+        let (pre5, act5) = forward_layer(&self.shadow.w5, &self.shadow.b5, &act4,
+            HIDDEN5_SIZE, HIDDEN4_SIZE, HIDDEN4_SIZE as f32);
+
+        let out_scale = (HIDDEN5_SIZE * HIDDEN5_SIZE * HIDDEN5_SIZE) as f32;
+        let (pre6, act6) = forward_layer(&self.shadow.w6, &self.shadow.b6, &act5,
+            OUTPUT_SIZE, HIDDEN5_SIZE, out_scale);
+
+        // output remapping: isigmoid [-127,127] -> [0,255]
+        let mut output = [0.0f32; OUTPUT_SIZE];
+        for i in 0..OUTPUT_SIZE {
+            output[i] = (act6[i] + 127.0) * 255.0 / 254.0;
+        }
+
+        // MSE loss gradient, chained through output remapping (255/254)
+        let mut d_act6 = vec![0.0f32; OUTPUT_SIZE];
+        for i in 0..OUTPUT_SIZE {
+            d_act6[i] = 2.0 * (output[i] - target[i] as f32) * (255.0 / 254.0);
+        }
+
+        // backward pass: compute gradients + update weights in place
+        let d5 = backward_and_update(&d_act6, &pre6, &act5,
+            &mut self.shadow.w6, &mut self.shadow.b6,
+            OUTPUT_SIZE, HIDDEN5_SIZE, out_scale, lr);
+        let d4 = backward_and_update(&d5, &pre5, &act4,
+            &mut self.shadow.w5, &mut self.shadow.b5,
+            HIDDEN5_SIZE, HIDDEN4_SIZE, HIDDEN4_SIZE as f32, lr);
+        let d3 = backward_and_update(&d4, &pre4, &act3,
+            &mut self.shadow.w4, &mut self.shadow.b4,
+            HIDDEN4_SIZE, HIDDEN3_SIZE, HIDDEN3_SIZE as f32, lr);
+        let d2 = backward_and_update(&d3, &pre3, &act2,
+            &mut self.shadow.w3, &mut self.shadow.b3,
+            HIDDEN3_SIZE, HIDDEN2_SIZE, HIDDEN2_SIZE as f32, lr);
+        let d1 = backward_and_update(&d2, &pre2, &act1,
+            &mut self.shadow.w2, &mut self.shadow.b2,
+            HIDDEN2_SIZE, HIDDEN1_SIZE, HIDDEN1_SIZE as f32, lr);
+        let _ = backward_and_update(&d1, &pre1, &input0,
+            &mut self.shadow.w1, &mut self.shadow.b1,
+            HIDDEN1_SIZE, STATE_SIZE, STATE_SIZE as f32, lr);
+
+        // quantize f32 shadow weights back to i8 for inference
+        self.shadow.quantize_into(&mut self.net);
+        self.steps += 1;
+    }
+}
 
 #[wasm_bindgen]
 impl CpuPipeline {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        CpuPipeline
+        let net = Network::new(0xCEEDEE); // Z NUTZ HA, gottem ;)
+        let shadow = ShadowWeights::from_network(&net);
+        CpuPipeline { net, shadow, lr: 1e-4, steps: 0 }
     }
 
     pub fn compute(&self, input: &str) -> String {
@@ -260,9 +469,30 @@ impl CpuPipeline {
 
     pub fn compute_bytes(&self, input: &[u8]) -> String {
         let state = fold_bytes(input);
-        let net = Network::new(0xCEEDEE); // Z NUTZ HA, gottem ;)
-        let p = net.forward(&state);
+        let p = self.net.forward(&state);
         format!("#{:02x}{:02x}{:02x}{:02x}", p[0], p[1], p[2], p[3])
+    }
+
+    // one training step: forward + backward + weight update
+    // returns the new output hex after update
+    pub fn train(&mut self, input: &str, target_hex: &str) -> String {
+        self.train_bytes(input.as_bytes(), target_hex)
+    }
+
+    pub fn train_bytes(&mut self, input: &[u8], target_hex: &str) -> String {
+        let state = fold_bytes(input);
+        let target = parse_hex_rgba(target_hex);
+        self.train_state(&state, target);
+        let p = self.net.forward(&state);
+        format!("#{:02x}{:02x}{:02x}{:02x}", p[0], p[1], p[2], p[3])
+    }
+
+    pub fn set_learning_rate(&mut self, lr: f32) {
+        self.lr = lr;
+    }
+
+    pub fn training_steps(&self) -> u32 {
+        self.steps
     }
 
     // returns all layer activations as flat u8 array (bias-encoded: original + 128)
@@ -273,8 +503,7 @@ impl CpuPipeline {
 
     pub fn activations_bytes(&self, input: &[u8]) -> Vec<u8> {
         let state = fold_bytes(input);
-        let net = Network::new(0xCEEDEE);
-        net.forward_all(&state)
+        self.net.forward_all(&state)
     }
 
     // layer sizes so JS doesn't need to hardcode them
